@@ -128,8 +128,8 @@ const MessagesPage = () => {
         .from('conversations')
         .select(`
           *,
-          user1:profiles!conversations_user1_id_fkey(id, username, avatar_url),
-          user2:profiles!conversations_user2_id_fkey(id, username, avatar_url)
+          user1:auth_users!conversations_user1_id_fkey(id, email),
+          user2:auth_users!conversations_user2_id_fkey(id, email)
         `)
         .or(`user1_id.eq.${session.user.id},user2_id.eq.${session.user.id}`)
         .order('updated_at', { ascending: false });
@@ -140,9 +140,16 @@ const MessagesPage = () => {
       const conversationsWithLastMessage = await Promise.all(
         (conversationsData || []).map(async (conversation) => {
           // Determine the other user in the conversation
-          const otherUser = conversation.user1_id === session.user.id 
-            ? conversation.user2 
-            : conversation.user1;
+          const otherUserId = conversation.user1_id === session.user.id 
+            ? conversation.user2.id 
+            : conversation.user1.id;
+
+          // Get the profile information for the other user
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('id, username, avatar_url')
+            .eq('id', otherUserId)
+            .single();
 
           // Get the last message
           const { data: lastMessageData } = await supabase
@@ -158,12 +165,18 @@ const MessagesPage = () => {
             .from('messages')
             .select('*', { count: 'exact', head: true })
             .eq('conversation_id', conversation.id)
-            .eq('sender_id', otherUser.id)
+            .eq('sender_id', otherUserId)
             .eq('is_read', false);
 
           return {
             ...conversation,
-            other_user: otherUser,
+            other_user: profileData || {
+              id: otherUserId,
+              username: conversation.user1_id === session.user.id 
+                ? conversation.user2.email.split('@')[0]
+                : conversation.user1.email.split('@')[0],
+              avatar_url: null
+            },
             last_message: lastMessageData,
             unread_count: unreadCount || 0
           };
@@ -295,17 +308,29 @@ const MessagesPage = () => {
             .from('conversations')
             .select(`
               *,
-              user1:profiles!conversations_user1_id_fkey(id, username, avatar_url),
-              user2:profiles!conversations_user2_id_fkey(id, username, avatar_url)
+              user1:auth_users!conversations_user1_id_fkey(id, email),
+              user2:auth_users!conversations_user2_id_fkey(id, email)
             `)
             .eq('id', existingConv.id)
             .single();
             
           if (data) {
-            const otherUser = data.user1_id === session.user.id ? data.user2 : data.user1;
+            const otherUserId = data.user1_id === session.user.id ? data.user2.id : data.user1.id;
+            const { data: profileData } = await supabase
+              .from('profiles')
+              .select('id, username, avatar_url')
+              .eq('id', otherUserId)
+              .single();
+
             setSelectedConversation({
               ...data,
-              other_user: otherUser,
+              other_user: profileData || {
+                id: otherUserId,
+                username: data.user1_id === session.user.id 
+                  ? data.user2.email.split('@')[0]
+                  : data.user1.email.split('@')[0],
+                avatar_url: null
+              },
               unread_count: 0
             });
             if (window.innerWidth < 768) {
